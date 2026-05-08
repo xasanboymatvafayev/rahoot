@@ -1,29 +1,22 @@
 /**
  * Parses a PDF file and extracts quiz questions in Rahoot format.
  *
- * Expected PDF format (plain text inside PDF):
+ * Expected PDF format:
  *
  * Quiz Title: My Quiz
  *
- * 1. What is the capital of France?
- * A) London
- * B) Paris *
- * C) Berlin
- * D) Rome
+ * 1. Question text?
+ * A) Wrong answer
+ * B) Correct answer *
+ * C) Wrong answer
+ * D) Wrong answer
  * Time: 30
  * Cooldown: 5
  *
- * 2. 2 + 2 = ?
- * A) 3
- * B) 4 *
- * C) 5
- * D) 6 *
- *
  * Rules:
- * - Question starts with "N." (number + dot)
- * - Answers: A) B) C) D) — correct ones marked with "*" at end
- * - Optional: Time: X (5–120), Cooldown: X (3–15)
- * - Quiz title: "Quiz Title: ..." or first line
+ * - Question: "N. text" (number + dot)
+ * - Answers: A) B) C) D) — correct one marked with "*" at end
+ * - Time and Cooldown are optional (defaults: 30s / 5s)
  */
 
 export type ParsedQuestion = {
@@ -43,74 +36,70 @@ export type ParseResult =
   | { success: true; data: ParsedQuizz }
   | { success: false; error: string }
 
-function extractTextFromPdf(arrayBuffer: ArrayBuffer): Promise<string> {
+declare global {
+  interface Window {
+    pdfjsLib?: {
+      getDocument: (src: { data: ArrayBuffer }) => { promise: Promise<PdfDoc> }
+      GlobalWorkerOptions: { workerSrc: string }
+    }
+  }
+}
+
+type PdfDoc = {
+  numPages: number
+  getPage: (n: number) => Promise<PdfPage>
+}
+
+type PdfPage = {
+  getTextContent: () => Promise<{ items: Array<{ str: string; hasEOL?: boolean }> }>
+}
+
+function loadPdfJs(): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Use pdf.js from CDN if available, otherwise try basic extraction
-    const uint8 = new Uint8Array(arrayBuffer)
-    const rawText = new TextDecoder("utf-8", { fatal: false }).decode(uint8)
+    if (window.pdfjsLib) {
+      resolve()
+      return
+    }
 
-    // Extract text from PDF streams (basic approach)
-    const textParts: string[] = []
-
-    // Match BT...ET blocks (PDF text blocks)
-    const btEtRegex = /BT([\s\S]*?)ET/g
-    let match
-    while ((match = btEtRegex.exec(rawText)) !== null) {
-      const block = match[1]
-      // Extract strings in parentheses: (text) Tj or [(text)] TJ
-      const strRegex = /\(([^)]*)\)\s*(?:Tj|TJ|'|")/g
-      let strMatch
-      while ((strMatch = strRegex.exec(block)) !== null) {
-        const str = strMatch[1]
-          .replace(/\\n/g, "\n")
-          .replace(/\\r/g, "\r")
-          .replace(/\\t/g, "\t")
-          .replace(/\\\(/g, "(")
-          .replace(/\\\)/g, ")")
-          .replace(/\\\\/g, "\\")
-        if (str.trim()) textParts.push(str)
+    const script = document.createElement("script")
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+    script.onload = () => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
+        resolve()
+      } else {
+        reject(new Error("pdf.js failed to load"))
       }
     }
-
-    // Fallback: extract all parenthesized strings if no BT/ET blocks
-    if (textParts.length === 0) {
-      const fallbackRegex = /\(([^\n\r()]{2,200})\)/g
-      let fb
-      while ((fb = fallbackRegex.exec(rawText)) !== null) {
-        const s = fb[1].trim()
-        if (s && !/^[\x00-\x08\x0e-\x1f\x7f-\x9f]/.test(s)) {
-          textParts.push(s)
-        }
-      }
-    }
-
-    const result = textParts.join("\n")
-    if (result.trim().length < 10) {
-      reject(new Error("Could not extract text from PDF. Make sure the PDF contains selectable text (not scanned image)."))
-    } else {
-      resolve(result)
-    }
+    script.onerror = () => reject(new Error("Failed to load pdf.js from CDN"))
+    document.head.appendChild(script)
   })
 }
 
-export async function parsePdfQuizz(file: File): Promise<ParseResult> {
-  try {
-    const arrayBuffer = await file.arrayBuffer()
-    let text: string
+async function extractTextFromPdf(arrayBuffer: ArrayBuffer): Promise<string> {
+  await loadPdfJs()
 
-    try {
-      text = await extractTextFromPdf(arrayBuffer)
-    } catch (e: unknown) {
-      return {
-        success: false,
-        error: e instanceof Error ? e.message : "Failed to read PDF",
+  const pdf = await window.pdfjsLib!.getDocument({ data: arrayBuffer }).promise
+  const lines: string[] = []
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+
+    let lineText = ""
+    for (const item of content.items) {
+      lineText += item.str
+      if (item.hasEOL) {
+        const trimmed = lineText.trim()
+        if (trimmed) lines.push(trimmed)
+        lineText = ""
       }
     }
-
-    return parseQuizzText(text)
-  } catch {
-    return { success: false, error: "Failed to process PDF file" }
+    if (lineText.trim()) lines.push(lineText.trim())
   }
+
+  return lines.join("\n")
 }
 
 export function parseQuizzText(text: string): ParseResult {
@@ -123,71 +112,79 @@ export function parseQuizzText(text: string): ParseResult {
     return { success: false, error: "PDF appears to be empty" }
   }
 
-  // Extract subject / title
+  // Extract title
   let subject = "Imported Quiz"
   let startLine = 0
 
-  const titleMatch = lines[0].match(/^(?:quiz\s*title|title|mavzu|sarlavha)\s*[:\-]\s*(.+)$/i)
+  const titleMatch = lines[0].match(
+    /^(?:quiz\s*title|title|mavzu|sarlavha)\s*[:\-]\s*(.+)$/i,
+  )
   if (titleMatch) {
     subject = titleMatch[1].trim()
     startLine = 1
   }
 
-  // Parse questions
   const questions: ParsedQuestion[] = []
   let currentQuestion: Partial<ParsedQuestion> | null = null
-  let currentTime = 30
-  let currentCooldown = 5
 
-  const answerPrefixes = /^[A-Da-d][).\s]\s*/
+  const answerPrefixRegex = /^[A-Da-d][).\s]\s*/
+
+  const pushCurrent = () => {
+    if (
+      currentQuestion &&
+      currentQuestion.question &&
+      currentQuestion.answers &&
+      currentQuestion.answers.length >= 2
+    ) {
+      if (!currentQuestion.solutions || currentQuestion.solutions.length === 0) {
+        currentQuestion.solutions = [0]
+      }
+      questions.push(currentQuestion as ParsedQuestion)
+    }
+  }
 
   for (let i = startLine; i < lines.length; i++) {
     const line = lines[i]
 
-    // Question line: starts with number+dot e.g. "1." or "1)"
+    // Question: "1. text" or "1) text"
     const questionMatch = line.match(/^(\d+)[.)]\s+(.+)$/)
     if (questionMatch) {
-      if (currentQuestion && currentQuestion.question && currentQuestion.answers && currentQuestion.answers.length >= 2) {
-        if (!currentQuestion.solutions || currentQuestion.solutions.length === 0) {
-          currentQuestion.solutions = [0] // default first answer
-        }
-        questions.push(currentQuestion as ParsedQuestion)
-      }
+      pushCurrent()
       currentQuestion = {
         question: questionMatch[2].trim(),
         answers: [],
         solutions: [],
-        time: currentTime,
-        cooldown: currentCooldown,
+        time: 30,
+        cooldown: 5,
       }
       continue
     }
 
     if (!currentQuestion) continue
 
-    // Time setting: "Time: 30" or "Vaqt: 30"
-    const timeMatch = line.match(/^(?:time|vaqt)\s*:\s*(\d+)$/i)
+    // Time
+    const timeMatch = line.match(/^(?:time|vaqt)\s*[:\-]\s*(\d+)$/i)
     if (timeMatch) {
       const t = parseInt(timeMatch[1])
       if (t >= 5 && t <= 120) currentQuestion.time = t
       continue
     }
 
-    // Cooldown setting: "Cooldown: 5"
-    const cooldownMatch = line.match(/^(?:cooldown|kechikish)\s*:\s*(\d+)$/i)
+    // Cooldown
+    const cooldownMatch = line.match(/^(?:cooldown|kechikish)\s*[:\-]\s*(\d+)$/i)
     if (cooldownMatch) {
       const c = parseInt(cooldownMatch[1])
       if (c >= 3 && c <= 15) currentQuestion.cooldown = c
       continue
     }
 
-    // Answer line: A) Answer text * (star = correct)
-    if (answerPrefixes.test(line)) {
-      const withoutPrefix = line.replace(answerPrefixes, "")
-      const isCorrect = withoutPrefix.endsWith("*")
+    // Answer: A) text  or  A) text *
+    if (answerPrefixRegex.test(line) && currentQuestion.answers!.length < 4) {
+      const withoutPrefix = line.replace(answerPrefixRegex, "")
+      const isCorrect = /\s*\*\s*$/.test(withoutPrefix)
       const answerText = withoutPrefix.replace(/\s*\*\s*$/, "").trim()
 
-      if (answerText && currentQuestion.answers!.length < 4) {
+      if (answerText) {
         const idx = currentQuestion.answers!.length
         currentQuestion.answers!.push(answerText)
         if (isCorrect) {
@@ -197,13 +194,7 @@ export function parseQuizzText(text: string): ParseResult {
     }
   }
 
-  // Push last question
-  if (currentQuestion && currentQuestion.question && currentQuestion.answers && currentQuestion.answers.length >= 2) {
-    if (!currentQuestion.solutions || currentQuestion.solutions.length === 0) {
-      currentQuestion.solutions = [0]
-    }
-    questions.push(currentQuestion as ParsedQuestion)
-  }
+  pushCurrent()
 
   if (questions.length === 0) {
     return {
@@ -214,4 +205,34 @@ export function parseQuizzText(text: string): ParseResult {
   }
 
   return { success: true, data: { subject, questions } }
+}
+
+export async function parsePdfQuizz(file: File): Promise<ParseResult> {
+  try {
+    const arrayBuffer = await file.arrayBuffer()
+    let text: string
+
+    try {
+      text = await extractTextFromPdf(arrayBuffer)
+    } catch (e: unknown) {
+      return {
+        success: false,
+        error:
+          e instanceof Error
+            ? e.message
+            : "Failed to read PDF. Make sure it contains selectable text (not a scanned image).",
+      }
+    }
+
+    if (!text.trim()) {
+      return {
+        success: false,
+        error: "Could not extract text from PDF. Make sure it contains selectable text.",
+      }
+    }
+
+    return parseQuizzText(text)
+  } catch {
+    return { success: false, error: "Failed to process PDF file" }
+  }
 }
