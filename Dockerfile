@@ -6,13 +6,12 @@ RUN npm install -g pnpm
 FROM base AS builder
 WORKDIR /app
 
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY packages/common/package.json ./packages/common/
 COPY packages/web/package.json ./packages/web/
 COPY packages/socket/package.json ./packages/socket/
 
-RUN pnpm install --frozen-lockfile --config.unsafe-perm=true
-RUN pnpm approve-builds --all 2>/dev/null || true
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
