@@ -11,7 +11,8 @@ COPY packages/common/package.json ./packages/common/
 COPY packages/web/package.json ./packages/web/
 COPY packages/socket/package.json ./packages/socket/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --config.unsafe-perm=true
+RUN pnpm approve-builds --all 2>/dev/null || true
 
 COPY . .
 
