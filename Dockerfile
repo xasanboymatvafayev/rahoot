@@ -11,7 +11,7 @@ COPY packages/common/package.json ./packages/common/
 COPY packages/web/package.json ./packages/web/
 COPY packages/socket/package.json ./packages/socket/
 
-RUN pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild
+RUN pnpm install --no-frozen-lockfile --ignore-scripts && pnpm rebuild esbuild
 
 COPY . .
 
