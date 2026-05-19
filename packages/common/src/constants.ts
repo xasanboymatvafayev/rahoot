@@ -39,6 +39,7 @@ export const EVENTS = {
     GET_CONFIG: "manager:getConfig",
     LOGOUT: "manager:logout",
     UNAUTHORIZED: "manager:unauthorized",
+    STOP_GAME: "manager:stopGame",       // O'yinni to'xtatish (YANGI)
   },
   QUIZZ: {
     GET: "quizz:get",
@@ -55,12 +56,30 @@ export const EVENTS = {
     DATA: "results:data",
     DELETE: "results:delete",
   },
+  // Jamoa hodisalari (YANGI)
+  TEAM: {
+    ASSIGNED: "team:assigned",           // O'yinchiga jamoa tayinlandi
+    SET_NAME: "team:setName",            // Sardor jamoa nomini qo'yadi
+    NAME_SET: "team:nameSet",            // Jamoa nomi tasdiqlandi
+    LEADERBOARD: "team:leaderboard",     // Jamoa reytingi
+  },
+  // Jamoa chati (YANGI)
+  CHAT: {
+    SEND: "chat:send",                   // Xabar yuborish
+    MESSAGE: "chat:message",             // Xabar olish
+  },
 } as const
 
 export const MEDIA_TYPES = {
   IMAGE: "image",
   VIDEO: "video",
   AUDIO: "audio",
+} as const
+
+// O'yin rejimlari (YANGI)
+export const GAME_MODE = {
+  SOLO: "solo",
+  TEAM: "team",
 } as const
 
 export const EXAMPLE_QUIZZ = {
@@ -81,24 +100,6 @@ export const EXAMPLE_QUIZZ = {
         url: "https://placehold.co/600x400.png",
       },
       solutions: [3],
-      cooldown: 5,
-      time: 20,
-    },
-    {
-      question: "What is good answer with two answers ?",
-      answers: ["Good answer", "No"],
-      media: {
-        type: MEDIA_TYPES.IMAGE,
-        url: "https://placehold.co/600x400.png",
-      },
-      solutions: [0],
-      cooldown: 5,
-      time: 20,
-    },
-    {
-      question: "Which of these are primary colors ?",
-      answers: ["Red", "Green", "Blue", "Yellow"],
-      solutions: [0, 2, 3],
       cooldown: 5,
       time: 20,
     },
