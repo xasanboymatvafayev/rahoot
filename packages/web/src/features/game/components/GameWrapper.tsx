@@ -14,41 +14,54 @@ import clsx from "clsx"
 import { type PropsWithChildren, useEffect, useState } from "react"
 import toast from "react-hot-toast"
 import { useTranslation } from "react-i18next"
+import { Square } from "lucide-react"
 
 type Props = PropsWithChildren & {
   statusName: Status | undefined
   onNext?: () => void
+  onStop?: () => void     // (YANGI) o'yinni to'xtatish
   manager?: boolean
+  gameId?: string
 }
 
-const GameWrapper = ({ children, statusName, onNext, manager }: Props) => {
-  const { isConnected } = useSocket()
+const GameWrapper = ({ children, statusName, onNext, onStop, manager, gameId }: Props) => {
+  const { isConnected, socket } = useSocket()
   const { player } = usePlayerStore()
   const { questionStates, setQuestionStates } = useQuestionStore()
   const { t } = useTranslation()
   const [isDisabled, setIsDisabled] = useState(false)
+  const [showStopConfirm, setShowStopConfirm] = useState(false)
   const next = statusName ? MANAGER_SKIP_BTN[statusName] : null
 
   useEvent(EVENTS.GAME.UPDATE_QUESTION, ({ current, total }) => {
-    setQuestionStates({
-      current,
-      total,
-    })
+    setQuestionStates({ current, total })
   })
 
   useEvent(EVENTS.GAME.ERROR_MESSAGE, (message) => {
     toast.error(t(message))
-    console.log(t(message))
     setIsDisabled(false)
   })
 
   useEffect(() => {
     setIsDisabled(false)
+    setShowStopConfirm(false)
   }, [statusName])
 
   const handleNext = () => {
     setIsDisabled(true)
     onNext?.()
+  }
+
+  const handleStopClick = () => {
+    setShowStopConfirm(true)
+  }
+
+  const handleStopConfirm = () => {
+    setShowStopConfirm(false)
+    if (gameId) {
+      socket?.emit(EVENTS.MANAGER.STOP_GAME, { gameId })
+    }
+    onStop?.()
   }
 
   return (
@@ -78,15 +91,30 @@ const GameWrapper = ({ children, statusName, onNext, manager }: Props) => {
                 </div>
               )}
 
-              {manager && next && (
-                <Button
-                  className={clsx("self-end bg-white px-4 text-black!", {
-                    "pointer-events-none": isDisabled,
-                  })}
-                  onClick={handleNext}
-                >
-                  {t(next)}
-                </Button>
+              {manager && (
+                <div className="flex gap-2 self-end">
+                  {/* O'yinni to'xtatish (YANGI) */}
+                  {questionStates && (
+                    <button
+                      onClick={handleStopClick}
+                      className="flex items-center gap-1.5 rounded-md bg-red-500/90 px-3 py-2 text-sm font-bold text-white hover:bg-red-600"
+                    >
+                      <Square className="size-3.5 fill-white" />
+                      To'xtatish
+                    </button>
+                  )}
+
+                  {next && (
+                    <Button
+                      className={clsx("bg-white px-4 text-black!", {
+                        "pointer-events-none": isDisabled,
+                      })}
+                      onClick={handleNext}
+                    >
+                      {t(next)}
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -103,6 +131,32 @@ const GameWrapper = ({ children, statusName, onNext, manager }: Props) => {
           </>
         )}
       </div>
+
+      {/* To'xtatish tasdiqlash dialogi (YANGI) */}
+      {showStopConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+          <div className="rounded-xl bg-white p-6 shadow-2xl w-72 text-center">
+            <h3 className="mb-2 text-lg font-bold text-gray-800">O'yinni to'xtatish</h3>
+            <p className="mb-5 text-sm text-gray-500">
+              O'yinni hozir to'xtatmoqchimisiz? Joriy statistika saqlanadi.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowStopConfirm(false)}
+                className="flex-1 rounded-lg border border-gray-200 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={handleStopConfirm}
+                className="flex-1 rounded-lg bg-red-500 py-2 text-sm font-semibold text-white hover:bg-red-600"
+              >
+                To'xtatish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
