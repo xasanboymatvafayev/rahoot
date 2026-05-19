@@ -1,4 +1,4 @@
-import type { Player, QuestionMedia } from "@rahoot/common/types/game"
+import type { Player, QuestionMedia, Team } from "@rahoot/common/types/game"
 
 export const STATUS = {
   SHOW_ROOM: "SHOW_ROOM",
@@ -11,6 +11,8 @@ export const STATUS = {
   SHOW_LEADERBOARD: "SHOW_LEADERBOARD",
   FINISHED: "FINISHED",
   WAIT: "WAIT",
+  SET_TEAM_NAME: "SET_TEAM_NAME",        // Sardor jamoa nomini kiritmoqda (YANGI)
+  WAIT_TEAM_NAME: "WAIT_TEAM_NAME",      // Boshqalar kutmoqda (YANGI)
 } as const
 
 export type Status = (typeof STATUS)[keyof typeof STATUS]
@@ -29,6 +31,8 @@ export type CommonStatusDataMap = {
     media?: QuestionMedia
     time: number
     totalPlayer: number
+    teamId?: string      // (YANGI) o'yinchi jamoasi
+    teamName?: string    // (YANGI)
   }
   SHOW_RESULT: {
     correct: boolean
@@ -37,9 +41,13 @@ export type CommonStatusDataMap = {
     myPoints: number
     rank: number
     aheadOfMe: string | null
+    teamPoints?: number  // (YANGI) jamoa umumiy bali
+    teamRank?: number    // (YANGI) jamoa o'rni
   }
   WAIT: { text: string }
-  FINISHED: { subject: string; top: Player[]; rank?: number }
+  FINISHED: { subject: string; top: Player[]; rank?: number; teams?: Team[] }
+  SET_TEAM_NAME: { teamId: string; captainName: string }     // (YANGI)
+  WAIT_TEAM_NAME: { captainName: string }                    // (YANGI)
 }
 
 type ManagerExtraStatus = {
@@ -51,7 +59,11 @@ type ManagerExtraStatus = {
     answers: string[]
     media?: QuestionMedia
   }
-  SHOW_LEADERBOARD: { oldLeaderboard: Player[]; leaderboard: Player[] }
+  SHOW_LEADERBOARD: {
+    oldLeaderboard: Player[]
+    leaderboard: Player[]
+    teamLeaderboard?: Team[]      // (YANGI)
+  }
 }
 
 export type PlayerStatusDataMap = CommonStatusDataMap
