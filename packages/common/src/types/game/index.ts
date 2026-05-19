@@ -1,4 +1,4 @@
-import type { MEDIA_TYPES } from "@rahoot/common/constants"
+import type { GAME_MODE, MEDIA_TYPES } from "@rahoot/common/constants"
 
 export type Player = {
   id: string
@@ -7,6 +7,8 @@ export type Player = {
   username: string
   points: number
   streak: number
+  avatar?: string   // emoji avatar (YANGI)
+  teamId?: string   // jamoa id (YANGI)
 }
 
 export type Answer = {
@@ -60,6 +62,9 @@ export type GameResultPlayer = {
   username: string
   points: number
   rank: number
+  avatar?: string
+  teamId?: string
+  teamName?: string
 }
 
 export type GameResult = {
@@ -68,6 +73,8 @@ export type GameResult = {
   date: string
   players: GameResultPlayer[]
   questions: QuestionResult[]
+  teams?: Team[]           // (YANGI)
+  gameMode?: GameMode      // (YANGI)
 }
 
 export type GameResultMeta = {
@@ -75,4 +82,23 @@ export type GameResultMeta = {
   subject: string
   date: string
   playerCount: number
+}
+
+// Jamoa tiplari (YANGI)
+export type GameMode = (typeof GAME_MODE)[keyof typeof GAME_MODE]
+
+export type Team = {
+  id: string
+  name: string
+  captainId: string       // sardor socket id
+  captainName: string
+  playerIds: string[]
+  points: number
+}
+
+export type ChatMessage = {
+  teamId: string
+  senderName: string
+  text: string
+  ts: number
 }
