@@ -1,4 +1,4 @@
-import { EVENTS, MEDIA_TYPES } from "@rahoot/common/constants"
+import { EVENTS, GAME_MODE } from "@rahoot/common/constants"
 import type {
   Answer,
   GameResult,
@@ -15,26 +15,23 @@ import {
 } from "@rahoot/common/types/game/status"
 import { CooldownTimer } from "@rahoot/socket/services/game/cooldown-timer"
 import { PlayerManager } from "@rahoot/socket/services/game/player-manager"
+import { TeamManager } from "@rahoot/socket/services/game/team-manager"
 import { timeToPoint } from "@rahoot/socket/utils/game"
 import sleep from "@rahoot/socket/utils/sleep"
 import { nanoid } from "nanoid"
+import type { GameMode } from "@rahoot/common/types/game"
 
-type BroadcastFn = <T extends Status>(
-  _status: T,
-  _data: StatusDataMap[T],
-) => void
-type SendFn = <T extends Status>(
-  _target: string,
-  _status: T,
-  _data: StatusDataMap[T],
-) => void
+type BroadcastFn = <T extends Status>(_status: T, _data: StatusDataMap[T]) => void
+type SendFn = <T extends Status>(_target: string, _status: T, _data: StatusDataMap[T]) => void
 
 export interface RoundManagerOptions {
   quizz: Quizz
   players: PlayerManager
+  teams: TeamManager
   cooldown: CooldownTimer
   io: Server
   gameId: string
+  gameMode: GameMode
   getManagerId: () => string
   broadcast: BroadcastFn
   send: SendFn
@@ -45,6 +42,7 @@ export interface RoundManagerOptions {
 export class RoundManager {
   private readonly opts: RoundManagerOptions
   private started = false
+  private stopped = false
   private currentQuestion = 0
   private playersAnswers: Answer[] = []
   private startTime = 0
@@ -68,21 +66,16 @@ export class RoundManager {
   }
 
   async start(socket: Socket): Promise<void> {
-    if (this.opts.getManagerId() !== socket.id) {
-      return
-    }
-
-    if (this.started) {
-      return
-    }
+    if (this.opts.getManagerId() !== socket.id) return
+    if (this.started) return
 
     if (this.opts.players.count() === 0) {
       socket.emit(EVENTS.GAME.ERROR_MESSAGE, "errors:game.noPlayersConnected")
-
       return
     }
 
     this.started = true
+    this.stopped = false
 
     this.opts.broadcast(STATUS.SHOW_START, {
       time: 3,
@@ -90,17 +83,17 @@ export class RoundManager {
     })
 
     await sleep(3)
+    if (this.stopped) return
 
     this.opts.io.to(this.opts.gameId).emit(EVENTS.GAME.START_COOLDOWN)
     await this.opts.cooldown.start(3)
+    if (this.stopped) return
 
     void this.newQuestion()
   }
 
   async newQuestion(): Promise<void> {
-    if (!this.started) {
-      return
-    }
+    if (!this.started || this.stopped) return
 
     const question = this.opts.quizz.questions[this.currentQuestion]
 
@@ -117,11 +110,9 @@ export class RoundManager {
     })
 
     await sleep(2)
+    if (!this.started || this.stopped) return
 
-    if (!this.started) {
-      return
-    }
-
+    const { MEDIA_TYPES } = require("@rahoot/common/constants")
     const imageMedia =
       question.media?.type === MEDIA_TYPES.IMAGE ? question.media : undefined
 
@@ -132,10 +123,7 @@ export class RoundManager {
     })
 
     await sleep(question.cooldown)
-
-    if (!this.started) {
-      return
-    }
+    if (!this.started || this.stopped) return
 
     this.startTime = Date.now()
 
@@ -148,40 +136,42 @@ export class RoundManager {
     })
 
     await this.opts.cooldown.start(question.time)
-
-    if (!this.started) {
-      return
-    }
+    if (!this.started || this.stopped) return
 
     this.showResults(question)
   }
 
   private showResults(question: Question): void {
     const currentPlayers = this.opts.players.getAll()
+    const isTeamMode = this.opts.gameMode === GAME_MODE.TEAM
 
     const oldLeaderboard = (() => {
       if (this.leaderboard.length === 0) {
         return currentPlayers.map((p) => ({ ...p }))
       }
-
       return this.leaderboard.map((p) => ({ ...p }))
     })()
 
     const totalType = this.playersAnswers.reduce(
       (acc: Record<number, number>, { answerId }) => {
         acc[answerId] = (acc[answerId] || 0) + 1
-
         return acc
       },
       {},
     )
+
+    // Jamoaviy ballarni reset qilish (bu turda qayta hisoblash)
+    if (isTeamMode) {
+      this.opts.teams.getAll().forEach((t) => {
+        t.points = 0
+      })
+    }
 
     const sortedPlayers = currentPlayers
       .map((player) => {
         const playerAnswer = this.playersAnswers.find(
           (a) => a.playerId === player.id,
         )
-
         const isCorrect = playerAnswer
           ? question.solutions.includes(playerAnswer.answerId)
           : false
@@ -192,15 +182,28 @@ export class RoundManager {
         player.points += points
         player.streak = isCorrect ? player.streak + 1 : 0
 
+        // Jamoa baliga qo'shish
+        if (isTeamMode && player.teamId) {
+          this.opts.teams.addPoints(player.teamId, points)
+        }
+
         return { ...player, lastCorrect: isCorrect, lastPoints: points }
       })
       .sort((a, b) => b.points - a.points)
 
     this.opts.players.replace(sortedPlayers)
 
+    const sortedTeams = isTeamMode ? this.opts.teams.getSortedTeams() : []
+
     sortedPlayers.forEach((player, index) => {
       const rank = index + 1
       const aheadPlayer = sortedPlayers[index - 1]
+      const playerTeam = isTeamMode
+        ? this.opts.teams.getTeamByPlayer(player.id)
+        : undefined
+      const teamRank = isTeamMode
+        ? sortedTeams.findIndex((t) => t.id === playerTeam?.id) + 1
+        : undefined
 
       this.opts.send(player.id, STATUS.SHOW_RESULT, {
         correct: player.lastCorrect,
@@ -209,6 +212,8 @@ export class RoundManager {
         myPoints: player.points,
         rank,
         aheadOfMe: aheadPlayer ? aheadPlayer.username : null,
+        teamPoints: playerTeam?.points,
+        teamRank: teamRank || undefined,
       })
     })
 
@@ -216,6 +221,13 @@ export class RoundManager {
       ...question,
       responses: totalType,
     })
+
+    // Manager ga jamoa reytingi
+    if (isTeamMode) {
+      this.opts.io
+        .to(this.opts.gameId)
+        .emit(EVENTS.TEAM.LEADERBOARD, sortedTeams)
+    }
 
     this.questionsHistory.push({
       ...question,
@@ -236,13 +248,8 @@ export class RoundManager {
     const player = this.opts.players.findById(socket.id)
     const question = this.opts.quizz.questions[this.currentQuestion]
 
-    if (!player) {
-      return
-    }
-
-    if (this.playersAnswers.find((a) => a.playerId === socket.id)) {
-      return
-    }
+    if (!player) return
+    if (this.playersAnswers.find((a) => a.playerId === socket.id)) return
 
     this.playersAnswers.push({
       playerId: player.id,
@@ -265,37 +272,74 @@ export class RoundManager {
   }
 
   nextQuestion(socket: Socket): void {
-    if (!this.started) {
-      return
-    }
-
-    if (socket.id !== this.opts.getManagerId()) {
-      return
-    }
-
-    if (!this.opts.quizz.questions[this.currentQuestion + 1]) {
-      return
-    }
+    if (!this.started || this.stopped) return
+    if (socket.id !== this.opts.getManagerId()) return
+    if (!this.opts.quizz.questions[this.currentQuestion + 1]) return
 
     this.currentQuestion += 1
     void this.newQuestion()
   }
 
   abortQuestion(socket: Socket): void {
-    if (!this.started) {
-      return
-    }
-
-    if (socket.id !== this.opts.getManagerId()) {
-      return
-    }
-
+    if (!this.started || this.stopped) return
+    if (socket.id !== this.opts.getManagerId()) return
     this.opts.cooldown.abort()
+  }
+
+  // O'yinni majburan to'xtatish (YANGI)
+  forceStop(socket: Socket): void {
+    if (socket.id !== this.opts.getManagerId()) return
+
+    this.stopped = true
+    this.started = false
+    this.opts.cooldown.abort()
+
+    const isTeamMode = this.opts.gameMode === GAME_MODE.TEAM
+    const sortedTeams = isTeamMode ? this.opts.teams.getSortedTeams() : undefined
+
+    const result: GameResult = {
+      id: `${Date.now()}-${nanoid(8)}`,
+      subject: this.opts.quizz.subject + " (to'xtatildi)",
+      date: new Date().toISOString(),
+      players: this.leaderboard.map((player, index) => ({
+        username: player.username,
+        points: player.points,
+        rank: index + 1,
+        teamId: player.teamId,
+        teamName: sortedTeams?.find((t) => t.playerIds.includes(player.id))?.name,
+      })),
+      questions: this.questionsHistory,
+      teams: sortedTeams,
+      gameMode: this.opts.gameMode,
+    }
+
+    // Natijani saqlash
+    this.opts.onGameFinished(result)
+
+    // Manager ga to'xtatildi va statistika
+    this.opts.io
+      .to(this.opts.getManagerId())
+      .emit(EVENTS.MANAGER.STOP_GAME, result)
+
+    // O'yinchilarga finish ekrani
+    this.leaderboard.forEach((player, index) => {
+      this.opts.send(player.id, STATUS.FINISHED, {
+        subject: this.opts.quizz.subject,
+        top: this.leaderboard.slice(0, 3),
+        rank: index + 1,
+        teams: sortedTeams,
+      })
+    })
+
+    console.log(`Game ${this.opts.gameId} force stopped`)
   }
 
   showLeaderboard(): void {
     const isLastRound =
       this.currentQuestion + 1 === this.opts.quizz.questions.length
+
+    const isTeamMode = this.opts.gameMode === GAME_MODE.TEAM
+    const sortedTeams = isTeamMode ? this.opts.teams.getSortedTeams() : undefined
 
     if (isLastRound) {
       this.started = false
@@ -310,13 +354,18 @@ export class RoundManager {
           username: player.username,
           points: player.points,
           rank: index + 1,
+          teamId: player.teamId,
+          teamName: sortedTeams?.find((t) => t.playerIds.includes(player.id))?.name,
         })),
         questions: this.questionsHistory,
+        teams: sortedTeams,
+        gameMode: this.opts.gameMode,
       })
 
       this.opts.send(this.opts.getManagerId(), STATUS.FINISHED, {
         subject: this.opts.quizz.subject,
         top,
+        teams: sortedTeams,
       })
 
       this.leaderboard.forEach((player, index) => {
@@ -324,6 +373,7 @@ export class RoundManager {
           subject: this.opts.quizz.subject,
           top,
           rank: index + 1,
+          teams: sortedTeams,
         })
       })
 
@@ -335,6 +385,7 @@ export class RoundManager {
     this.opts.send(this.opts.getManagerId(), STATUS.SHOW_LEADERBOARD, {
       oldLeaderboard: oldLeaderboard.slice(0, 5),
       leaderboard: this.leaderboard.slice(0, 5),
+      teamLeaderboard: sortedTeams,
     })
 
     this.tempOldLeaderboard = null
