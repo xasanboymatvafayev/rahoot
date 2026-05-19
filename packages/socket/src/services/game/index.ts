@@ -1,5 +1,5 @@
-import { EVENTS } from "@rahoot/common/constants"
-import type { Player, Quizz } from "@rahoot/common/types/game"
+import { EVENTS, GAME_MODE } from "@rahoot/common/constants"
+import type { GameMode, Player, Quizz } from "@rahoot/common/types/game"
 import type { Server, Socket } from "@rahoot/common/types/game/socket"
 import {
   STATUS,
@@ -10,6 +10,7 @@ import Config from "@rahoot/socket/services/config"
 import { CooldownTimer } from "@rahoot/socket/services/game/cooldown-timer"
 import { PlayerManager } from "@rahoot/socket/services/game/player-manager"
 import { RoundManager } from "@rahoot/socket/services/game/round-manager"
+import { TeamManager } from "@rahoot/socket/services/game/team-manager"
 import Registry from "@rahoot/socket/services/registry"
 import { createInviteCode } from "@rahoot/socket/utils/game"
 import { v4 as uuid } from "uuid"
@@ -19,6 +20,8 @@ const registry = Registry.getInstance()
 class Game {
   readonly gameId: string
   readonly inviteCode: string
+  readonly gameMode: GameMode
+  readonly teamCount: number
 
   private readonly io: Server
   private readonly _manager: {
@@ -29,6 +32,7 @@ class Game {
   private readonly playerManager: PlayerManager
   private readonly round: RoundManager
   private readonly cooldown: CooldownTimer
+  private readonly teamManager: TeamManager
 
   private lastBroadcastStatus: {
     name: Status
@@ -43,14 +47,20 @@ class Game {
     { name: Status; data: StatusDataMap[Status] }
   > = new Map()
 
-  constructor(io: Server, socket: Socket, quizz: Quizz) {
-    if (!io) {
-      throw new Error("Socket server not initialized")
-    }
+  constructor(
+    io: Server,
+    socket: Socket,
+    quizz: Quizz,
+    gameMode: GameMode = GAME_MODE.SOLO,
+    teamCount = 2,
+  ) {
+    if (!io) throw new Error("Socket server not initialized")
 
     this.io = io
     this.gameId = uuid()
     this.inviteCode = createInviteCode()
+    this.gameMode = gameMode
+    this.teamCount = teamCount
     this._manager = {
       id: socket.id,
       clientId: socket.handshake.auth.clientId,
@@ -58,6 +68,7 @@ class Game {
     }
 
     this.cooldown = new CooldownTimer(io, this.gameId)
+    this.teamManager = new TeamManager(io, this.gameId)
 
     this.playerManager = new PlayerManager(
       io,
@@ -68,9 +79,11 @@ class Game {
     this.round = new RoundManager({
       quizz,
       players: this.playerManager,
+      teams: this.teamManager,
       cooldown: this.cooldown,
       io,
       gameId: this.gameId,
+      gameMode,
       getManagerId: () => this._manager.id,
       broadcast: this.broadcastStatus.bind(this),
       send: this.sendStatus.bind(this),
@@ -85,10 +98,12 @@ class Game {
     socket.emit(EVENTS.MANAGER.GAME_CREATED, {
       gameId: this.gameId,
       inviteCode: this.inviteCode,
+      gameMode,
+      teamCount,
     })
 
     console.log(
-      `New game created: ${this.inviteCode} subject: ${quizz.subject}`,
+      `New game created: ${this.inviteCode} mode:${gameMode} teams:${teamCount}`,
     )
   }
 
@@ -128,7 +143,7 @@ class Game {
     this.io.to(target).emit(EVENTS.GAME.STATUS, statusData)
   }
 
-  // Player actions
+  // ── Player actions ───────────────────────────────────────────────────────
 
   join(socket: Socket, username: string) {
     this.playerManager.join(socket, username)
@@ -140,14 +155,56 @@ class Game {
     }
   }
 
-  // Reconnect
+  // ── Chat (faqat jamoa ichida) ────────────────────────────────────────────
+
+  sendChatMessage(socket: Socket, text: string) {
+    if (this.gameMode !== GAME_MODE.TEAM) return
+
+    const player = this.playerManager.findById(socket.id)
+    if (!player || !player.teamId) return
+
+    const clean = text.trim().slice(0, 200)
+    if (!clean) return
+
+    // Faqat shu jamoaga yuborish
+    const team = this.teamManager.getTeamByPlayer(socket.id)
+    if (!team) return
+
+    const msg = {
+      teamId: player.teamId,
+      senderName: player.username,
+      text: clean,
+      ts: Date.now(),
+    }
+
+    team.playerIds.forEach((pid) => {
+      this.io.to(pid).emit(EVENTS.CHAT.MESSAGE, msg)
+    })
+  }
+
+  // ── Jamoa nomi ───────────────────────────────────────────────────────────
+
+  setTeamName(socket: Socket, name: string) {
+    if (this.gameMode !== GAME_MODE.TEAM) return
+
+    const team = this.teamManager.setTeamName(socket.id, name)
+    if (!team) return
+
+    // Barcha jamoalar nom qo'yishni tugatdimi — o'yinni boshlash
+    if (this.teamManager.allNamesSet()) {
+      void this.round.start(
+        this.io.sockets.sockets.get(this._manager.id) as Socket,
+      )
+    }
+  }
+
+  // ── Reconnect ────────────────────────────────────────────────────────────
 
   reconnect(socket: Socket) {
     const { clientId } = socket.handshake.auth
 
     if (this._manager.clientId === clientId) {
       this.reconnectManager(socket)
-
       return
     }
 
@@ -157,7 +214,6 @@ class Game {
   private reconnectManager(socket: Socket) {
     if (this._manager.connected) {
       socket.emit(EVENTS.GAME.RESET, "errors:game.managerAlreadyConnected")
-
       return
     }
 
@@ -165,7 +221,8 @@ class Game {
     this._manager.id = socket.id
     this._manager.connected = true
 
-    const status = this.managerStatus ??
+    const status =
+      this.managerStatus ??
       this.lastBroadcastStatus ?? {
         name: STATUS.WAIT,
         data: { text: "game:waitingForPlayers" },
@@ -187,13 +244,16 @@ class Game {
     const { clientId } = socket.handshake.auth
     const player = this.playerManager.findByClientId(clientId)
 
-    if (!player) {
+    if (!player) return
+
+    // Reconnect oynasi o'tib ketganmi?
+    if (player.connected) {
+      socket.emit(EVENTS.GAME.RESET, "errors:game.playerAlreadyConnected")
       return
     }
 
-    if (player.connected) {
-      socket.emit(EVENTS.GAME.RESET, "errors:game.playerAlreadyConnected")
-
+    if (!this.playerManager.canReconnect(clientId)) {
+      socket.emit(EVENTS.GAME.RESET, "errors:game.reconnectExpired")
       return
     }
 
@@ -201,9 +261,9 @@ class Game {
 
     const oldSocketId = player.id
     this.playerManager.updateSocketId(oldSocketId, socket.id)
-    player.connected = true
 
-    const status = this.playerStatus.get(oldSocketId) ??
+    const status =
+      this.playerStatus.get(oldSocketId) ??
       this.lastBroadcastStatus ?? {
         name: STATUS.WAIT,
         data: { text: "game:waitingForPlayers" },
@@ -223,12 +283,29 @@ class Game {
     })
     socket.emit(EVENTS.GAME.TOTAL_PLAYERS, this.playerManager.count())
 
-    console.log(
-      `Player ${player.username} reconnected to game ${this.inviteCode}`,
-    )
+    // Jamoa ma'lumotini qayta yuborish
+    if (this.gameMode === GAME_MODE.TEAM && player.teamId) {
+      const team = this.teamManager.getTeamByPlayer(socket.id)
+      if (team) {
+        socket.emit(EVENTS.TEAM.ASSIGNED, {
+          teamId: team.id,
+          teamName: team.name,
+          captainId: team.captainId,
+          captainName: team.captainName,
+          isCaptain: socket.id === team.captainId,
+          members: team.playerIds
+            .map((pid) =>
+              this.playerManager.getAll().find((p) => p.id === pid)?.username,
+            )
+            .filter(Boolean),
+        })
+      }
+    }
+
+    console.log(`Player ${player.username} reconnected to ${this.inviteCode}`)
   }
 
-  // Disconnect helpers
+  // ── Disconnect ───────────────────────────────────────────────────────────
 
   setManagerDisconnected() {
     this._manager.connected = false
@@ -248,15 +325,37 @@ class Game {
   setPlayerDisconnected(socketId: string) {
     this.playerManager.setDisconnected(socketId)
     this.playerManager.broadcastCount()
+    // Disconnect eskirganlarini tozalash
+    this.playerManager.cleanupDisconnected()
   }
 
-  // Game flow
+  // ── Game flow ────────────────────────────────────────────────────────────
 
   abortCooldown() {
     this.cooldown.abort()
   }
 
   async start(socket: Socket) {
+    if (this.gameMode === GAME_MODE.TEAM) {
+      // Jamoalarga bo'lish
+      const teams = this.teamManager.assignTeams(
+        this.playerManager.getAll(),
+        this.teamCount,
+      )
+
+      // Manager ga jamoalar ro'yxatini yuborish
+      this.io.to(this._manager.id).emit(EVENTS.TEAM.LEADERBOARD, teams)
+
+      // O'yinchilarga jamoa ma'lumoti va sardordan nom so'rash
+      this.teamManager.notifyPlayers(
+        this.playerManager.getAll(),
+        this.sendStatus.bind(this),
+      )
+
+      // Barcha jamoalar nomini qo'yishdan keyin round.start chaqiriladi (setTeamName dan)
+      return
+    }
+
     await this.round.start(socket)
   }
 
@@ -274,6 +373,12 @@ class Game {
 
   showLeaderboard() {
     this.round.showLeaderboard()
+  }
+
+  // O'yinni to'xtatish (YANGI)
+  stopGame(socket: Socket) {
+    if (socket.id !== this._manager.id) return
+    this.round.forceStop(socket)
   }
 }
 
