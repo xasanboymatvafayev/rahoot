@@ -1,4 +1,4 @@
-import { EVENTS, GAME_MODE } from "@rahoot/common/constants"
+import { EVENTS, MEDIA_TYPES } from "@rahoot/common/constants"
 import type { QuestionMediaType } from "@rahoot/common/types/game"
 import type { CommonStatusDataMap } from "@rahoot/common/types/game/status"
 import QuestionMedia from "@rahoot/web/components/QuestionMedia"
@@ -15,10 +15,9 @@ import {
   SFX,
 } from "@rahoot/web/features/game/utils/constants"
 import clsx from "clsx"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import useSound from "use-sound"
-import { MEDIA_TYPES } from "@rahoot/common/constants"
 
 type Props = {
   data: CommonStatusDataMap["SELECT_ANSWER"]
@@ -31,7 +30,7 @@ const Answers = ({
   const { player, gameId } = usePlayerStore()
   const [cooldown, setCooldown] = useState(time)
   const [totalAnswer, setTotalAnswer] = useState(0)
-  const [selected, setSelected] = useState<number | null>(null) // tanlangan javob (YANGI)
+  const [selected, setSelected] = useState<number | null>(null)
   const { t } = useTranslation()
   const isTeam = !!teamId
 
@@ -44,7 +43,6 @@ const Answers = ({
 
   const handleAnswer = (answerKey: number) => () => {
     if (!player || !gameId || selected !== null) return
-
     setSelected(answerKey)
     socket?.emit(EVENTS.PLAYER.SELECTED_ANSWER, {
       gameId,
@@ -62,30 +60,27 @@ const Answers = ({
     if (disabledMusicMedia.includes(media?.type)) return
 
     playMusic()
-    return () => { stopMusic() }
+    return () => {
+      stopMusic()
+    }
   }, [playMusic])
 
-  useEvent(EVENTS.GAME.COOLDOWN, (sec) => { setCooldown(sec) })
+  useEvent(EVENTS.GAME.COOLDOWN, (sec) => {
+    setCooldown(sec)
+  })
 
   useEvent(EVENTS.GAME.PLAYER_ANSWER, (count) => {
     setTotalAnswer(count)
     sfxPop()
   })
 
-  // Timer rangini hisoblash (YANGI — qizilga o'tish)
   const pct = (cooldown / time) * 100
   const timerColor =
-    pct > 50
-      ? "bg-green-400"
-      : pct > 25
-        ? "bg-yellow-400"
-        : "bg-red-500"
-
+    pct > 50 ? "bg-green-400" : pct > 25 ? "bg-yellow-400" : "bg-red-500"
   const timerPulse = pct <= 25
 
   return (
     <div className="flex h-full flex-1 flex-col justify-between">
-      {/* Jamoa nomi (YANGI) */}
       {isTeam && teamName && (
         <div className="absolute top-14 left-1/2 -translate-x-1/2">
           <span className="rounded-full bg-violet-700/80 px-4 py-1 text-sm font-bold text-white backdrop-blur-sm">
@@ -102,7 +97,7 @@ const Answers = ({
       </div>
 
       <div>
-        {/* Timer progress bar (YANGI — animatsiyali) */}
+        {/* Animatsiyali timer progress bar */}
         <div className="mx-auto mb-2 w-full max-w-7xl px-2">
           <div className="h-2 w-full overflow-hidden rounded-full bg-black/30">
             <div
@@ -142,8 +137,8 @@ const Answers = ({
               key={key}
               className={clsx(
                 ANSWERS_COLORS[key],
-                selected !== null && selected !== key && "opacity-40 scale-95",
-                selected === key && "ring-4 ring-white/60 scale-105",
+                selected !== null && selected !== key && "scale-95 opacity-40",
+                selected === key && "scale-105 ring-4 ring-white/60",
                 "transition-all duration-200",
               )}
               icon={ANSWERS_ICONS[key]}
@@ -156,7 +151,6 @@ const Answers = ({
         </div>
       </div>
 
-      {/* Jamoa chati (YANGI — faqat jamoaviy rejimda) */}
       {isTeam && <TeamChat />}
     </div>
   )
