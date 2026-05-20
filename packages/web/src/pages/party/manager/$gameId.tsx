@@ -54,22 +54,25 @@ const ManagerGamePage = () => {
     toast.error(t(message))
   })
 
+  // Manager STOP_GAME natijasini qabul qilish
+  useEvent(EVENTS.MANAGER.STOP_GAME, () => {
+    navigate({ to: "/manager/config" })
+    reset()
+    setQuestionStates(null)
+    toast.success("O'yin to'xtatildi. Natija saqlandi.")
+  })
+
   const handleSkip = () => {
-    if (!status) {
-      return
-    }
+    if (!status) return
 
     if (status.name === STATUS.FINISHED) {
       navigate({ to: "/manager/config" })
       reset()
       setQuestionStates(null)
-
       return
     }
 
-    if (!gameId) {
-      return
-    }
+    if (!gameId) return
 
     if (isKeyOf(MANAGER_SKIP_EVENTS, status.name)) {
       socket?.emit(MANAGER_SKIP_EVENTS[status.name], { gameId })
@@ -82,7 +85,12 @@ const ManagerGamePage = () => {
       : null
 
   return (
-    <GameWrapper statusName={status?.name} onNext={handleSkip} manager>
+    <GameWrapper
+      statusName={status?.name}
+      onNext={handleSkip}
+      manager
+      gameId={gameId ?? undefined}
+    >
       {CurrentComponent && <CurrentComponent data={status!.data as never} />}
     </GameWrapper>
   )
