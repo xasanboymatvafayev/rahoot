@@ -1,6 +1,7 @@
-import { EVENTS, GAME_MODE } from "@rahoot/common/constants"
+import { EVENTS, GAME_MODE, MEDIA_TYPES } from "@rahoot/common/constants"
 import type {
   Answer,
+  GameMode,
   GameResult,
   Player,
   Question,
@@ -8,18 +9,13 @@ import type {
   Quizz,
 } from "@rahoot/common/types/game"
 import type { Server, Socket } from "@rahoot/common/types/game/socket"
-import {
-  type Status,
-  STATUS,
-  type StatusDataMap,
-} from "@rahoot/common/types/game/status"
+import { STATUS, type Status, type StatusDataMap } from "@rahoot/common/types/game/status"
 import { CooldownTimer } from "@rahoot/socket/services/game/cooldown-timer"
 import { PlayerManager } from "@rahoot/socket/services/game/player-manager"
 import { TeamManager } from "@rahoot/socket/services/game/team-manager"
 import { timeToPoint } from "@rahoot/socket/utils/game"
 import sleep from "@rahoot/socket/utils/sleep"
 import { nanoid } from "nanoid"
-import type { GameMode } from "@rahoot/common/types/game"
 
 type BroadcastFn = <T extends Status>(_status: T, _data: StatusDataMap[T]) => void
 type SendFn = <T extends Status>(_target: string, _status: T, _data: StatusDataMap[T]) => void
@@ -112,7 +108,6 @@ export class RoundManager {
     await sleep(2)
     if (!this.started || this.stopped) return
 
-    const { MEDIA_TYPES } = require("@rahoot/common/constants")
     const imageMedia =
       question.media?.type === MEDIA_TYPES.IMAGE ? question.media : undefined
 
@@ -160,7 +155,6 @@ export class RoundManager {
       {},
     )
 
-    // Jamoaviy ballarni reset qilish (bu turda qayta hisoblash)
     if (isTeamMode) {
       this.opts.teams.getAll().forEach((t) => {
         t.points = 0
@@ -182,7 +176,6 @@ export class RoundManager {
         player.points += points
         player.streak = isCorrect ? player.streak + 1 : 0
 
-        // Jamoa baliga qo'shish
         if (isTeamMode && player.teamId) {
           this.opts.teams.addPoints(player.teamId, points)
         }
@@ -222,7 +215,6 @@ export class RoundManager {
       responses: totalType,
     })
 
-    // Manager ga jamoa reytingi
     if (isTeamMode) {
       this.opts.io
         .to(this.opts.gameId)
@@ -286,7 +278,6 @@ export class RoundManager {
     this.opts.cooldown.abort()
   }
 
-  // O'yinni majburan to'xtatish (YANGI)
   forceStop(socket: Socket): void {
     if (socket.id !== this.opts.getManagerId()) return
 
@@ -306,22 +297,20 @@ export class RoundManager {
         points: player.points,
         rank: index + 1,
         teamId: player.teamId,
-        teamName: sortedTeams?.find((t) => t.playerIds.includes(player.id))?.name,
+        teamName: sortedTeams?.find((t) => t.playerIds.includes(player.id))
+          ?.name,
       })),
       questions: this.questionsHistory,
       teams: sortedTeams,
       gameMode: this.opts.gameMode,
     }
 
-    // Natijani saqlash
     this.opts.onGameFinished(result)
 
-    // Manager ga to'xtatildi va statistika
     this.opts.io
       .to(this.opts.getManagerId())
       .emit(EVENTS.MANAGER.STOP_GAME, result)
 
-    // O'yinchilarga finish ekrani
     this.leaderboard.forEach((player, index) => {
       this.opts.send(player.id, STATUS.FINISHED, {
         subject: this.opts.quizz.subject,
@@ -339,7 +328,9 @@ export class RoundManager {
       this.currentQuestion + 1 === this.opts.quizz.questions.length
 
     const isTeamMode = this.opts.gameMode === GAME_MODE.TEAM
-    const sortedTeams = isTeamMode ? this.opts.teams.getSortedTeams() : undefined
+    const sortedTeams = isTeamMode
+      ? this.opts.teams.getSortedTeams()
+      : undefined
 
     if (isLastRound) {
       this.started = false
@@ -355,7 +346,8 @@ export class RoundManager {
           points: player.points,
           rank: index + 1,
           teamId: player.teamId,
-          teamName: sortedTeams?.find((t) => t.playerIds.includes(player.id))?.name,
+          teamName: sortedTeams?.find((t) => t.playerIds.includes(player.id))
+            ?.name,
         })),
         questions: this.questionsHistory,
         teams: sortedTeams,
