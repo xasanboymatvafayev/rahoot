@@ -26,14 +26,14 @@ const PlayerFinished = ({ data: { rank, subject, teams } }: Props) => {
   const rankKey =
     typeof rank === "number" ? (rankKeyMap[rank] ?? "game:rank.other") : null
 
+  // Bug fix: player.id bilan taqqoslash kerak, username emas
   const myTeam = teams?.find((team) =>
-    team.playerIds?.includes(player?.username ?? ""),
+    player?.id ? team.playerIds?.includes(player.id) : false,
   )
-  const teamRank = myTeam ? teams!.indexOf(myTeam) + 1 : null
+  const teamRank = myTeam ? (teams!.indexOf(myTeam) + 1) : null
 
   return (
     <div className="flex h-full flex-1 flex-col items-center justify-center gap-6 px-4">
-      {/* Trophy animatsiyasi (YANGI) */}
       <motion.div
         initial={{ scale: 0, rotate: -20 }}
         animate={{ scale: 1, rotate: 0 }}
@@ -72,7 +72,6 @@ const PlayerFinished = ({ data: { rank, subject, teams } }: Props) => {
         {player?.points ?? 0} ball
       </motion.div>
 
-      {/* Jamoa natijasi (YANGI) */}
       {myTeam && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
