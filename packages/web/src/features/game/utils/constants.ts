@@ -8,8 +8,10 @@ import Question from "@rahoot/web/features/game/components/states/Question"
 import Responses from "@rahoot/web/features/game/components/states/Responses"
 import Result from "@rahoot/web/features/game/components/states/Result"
 import Room from "@rahoot/web/features/game/components/states/Room"
+import SetTeamName from "@rahoot/web/features/game/components/states/SetTeamName"
 import Start from "@rahoot/web/features/game/components/states/Start"
 import Wait from "@rahoot/web/features/game/components/states/Wait"
+import WaitTeamName from "@rahoot/web/features/game/components/states/WaitTeamName"
 
 import { STATUS } from "@rahoot/common/types/game/status"
 import Circle from "@rahoot/web/features/game/components/icons/Circle"
@@ -45,6 +47,8 @@ export const GAME_STATE_COMPONENTS = {
   [STATUS.SHOW_RESULT]: Result,
   [STATUS.SHOW_PREPARED]: Prepared,
   [STATUS.FINISHED]: PlayerFinished,
+  [STATUS.SET_TEAM_NAME]: SetTeamName,
+  [STATUS.WAIT_TEAM_NAME]: WaitTeamName,
 }
 
 export const GAME_STATE_COMPONENTS_MANAGER = {
@@ -98,4 +102,6 @@ export const MANAGER_SKIP_BTN = {
   [STATUS.SHOW_LEADERBOARD]: "common:next",
   [STATUS.FINISHED]: "common:exit",
   [STATUS.WAIT]: null,
+  [STATUS.SET_TEAM_NAME]: null,
+  [STATUS.WAIT_TEAM_NAME]: null,
 }
