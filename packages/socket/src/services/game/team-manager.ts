@@ -1,20 +1,17 @@
 import { EVENTS } from "@rahoot/common/constants"
 import type { Player, Team } from "@rahoot/common/types/game"
 import type { Server } from "@rahoot/common/types/game/socket"
+import { STATUS } from "@rahoot/common/types/game/status"
+import type { StatusDataMap } from "@rahoot/common/types/game/status"
 import { v4 as uuid } from "uuid"
 
-const TEAM_COLORS = [
-  "Qizil",
-  "Ko'k",
-  "Yashil",
-  "Sariq",
-  "To'q sariq",
-  "Binafsha",
-]
+const TEAM_COLORS = ["Qizil", "Ko'k", "Yashil", "Sariq", "To'q sariq", "Binafsha"]
+
+type SendFn = (targetId: string, status: keyof StatusDataMap, data: any) => void
 
 export class TeamManager {
   private teams: Map<string, Team> = new Map()
-  private pendingNames: Set<string> = new Set() // sardorlar nom kutmoqda
+  private pendingNames: Set<string> = new Set()
   private readonly io: Server
   private readonly gameId: string
 
@@ -23,11 +20,9 @@ export class TeamManager {
     this.gameId = gameId
   }
 
-  // O'yinchilarni jamoalarga bo'lish
   assignTeams(players: Player[], teamCount: number): Team[] {
     this.teams.clear()
 
-    // Jamoalarni yaratish
     const teamList: Team[] = []
     for (let i = 0; i < teamCount; i++) {
       const team: Team = {
@@ -41,17 +36,14 @@ export class TeamManager {
       teamList.push(team)
     }
 
-    // O'yinchilarni random aralashtirish
     const shuffled = [...players].sort(() => Math.random() - 0.5)
 
-    // Jamoalarga teng bo'lish
     shuffled.forEach((player, idx) => {
       const team = teamList[idx % teamCount]
       team.playerIds.push(player.id)
       player.teamId = team.id
     })
 
-    // Har jamoadan random sardor tanlash
     teamList.forEach((team) => {
       const randomIdx = Math.floor(Math.random() * team.playerIds.length)
       team.captainId = team.playerIds[randomIdx]
@@ -59,16 +51,12 @@ export class TeamManager {
       team.captainName = captain?.username ?? "Sardor"
     })
 
-    // Xotirada saqlash
     teamList.forEach((team) => this.teams.set(team.id, team))
 
     return teamList
   }
 
-  // Har bir o'yinchiga jamoa ma'lumotini yuborish
-  notifyPlayers(players: Player[], getStatusSender: (targetId: string, status: any, data: any) => void): void {
-    const { STATUS } = require("@rahoot/common/types/game/status")
-
+  notifyPlayers(players: Player[], sendStatus: SendFn): void {
     this.teams.forEach((team) => {
       team.playerIds.forEach((playerId) => {
         const player = players.find((p) => p.id === playerId)
@@ -86,25 +74,23 @@ export class TeamManager {
         })
       })
 
-      // Sardorga nom berish so'rovi
       this.pendingNames.add(team.id)
-      getStatusSender(team.captainId, STATUS.SET_TEAM_NAME, {
+
+      sendStatus(team.captainId, STATUS.SET_TEAM_NAME, {
         teamId: team.id,
         captainName: team.captainName,
       })
 
-      // Boshqa a'zolarga kutish holati
       team.playerIds
         .filter((pid) => pid !== team.captainId)
         .forEach((pid) => {
-          getStatusSender(pid, STATUS.WAIT_TEAM_NAME, {
+          sendStatus(pid, STATUS.WAIT_TEAM_NAME, {
             captainName: team.captainName,
           })
         })
     })
   }
 
-  // Sardor jamoa nomini qo'yadi
   setTeamName(captainSocketId: string, name: string): Team | null {
     const team = this.findTeamByCaptain(captainSocketId)
     if (!team) return null
@@ -113,7 +99,6 @@ export class TeamManager {
     team.name = cleanName
     this.pendingNames.delete(team.id)
 
-    // Jamoaga nom tasdiqlandi deb xabar berish
     this.io.to(this.gameId).emit(EVENTS.TEAM.NAME_SET, {
       teamId: team.id,
       teamName: cleanName,
@@ -122,12 +107,10 @@ export class TeamManager {
     return team
   }
 
-  // Barcha jamoalar nom qo'yishni tugatdimi?
   allNamesSet(): boolean {
     return this.pendingNames.size === 0
   }
 
-  // Jamoa baliga qo'shish
   addPoints(teamId: string, points: number): void {
     const team = this.teams.get(teamId)
     if (team) {
@@ -135,7 +118,6 @@ export class TeamManager {
     }
   }
 
-  // Jamoalar reytingi (balga qarab)
   getSortedTeams(): Team[] {
     return [...this.teams.values()].sort((a, b) => b.points - a.points)
   }
